@@ -2,80 +2,66 @@
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
-    <title>GTA Drift - Final Fix</title>
+    <title>GTA Drift - Nitro Edition</title>
     <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
     <style>
-        body { margin: 0; background: #111; display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; }
-        #menu { position: absolute; background: rgba(0,0,0,0.9); padding: 30px; border-radius: 15px; text-align: center; color: white; z-index: 100; font-family: sans-serif; }
-        button { background: #e74c3c; color: white; border: none; padding: 15px 30px; margin: 10px; border-radius: 5px; cursor: pointer; font-size: 18px; }
-        #ui { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 8px; font-family: monospace; pointer-events: none; }
+        body { margin: 0; background: #111; overflow: hidden; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 8px; font-family: monospace; pointer-events: none; z-index: 10; }
     </style>
 </head>
 <body>
-
-    <div id="menu">
-        <h1>DRIFT CHALLENGE</h1>
-        <button onclick="iniciar(1)">NÍVEL 1: OVAL</button><br>
-        <button onclick="iniciar(2)">NÍVEL 2: CIRCUITO FECHADO</button>
-    </div>
-
-    <div id="ui" style="display:none">
+    <div id="ui">
         <div id="kmh" style="font-size: 20px; color: #0f0;">KM/H: 0</div>
         <div id="pts" style="font-size: 18px; color: #ff0;">DRIFT: 0</div>
+        <div id="nitro-status" style="color: #0cf;">NITRO: PRONTO (ESPAÇO)</div>
     </div>
 
     <script>
         let game;
         const WORLD_SIZE = 4000;
 
-        function iniciar(nivel) {
-            document.getElementById('menu').style.display = 'none';
-            document.getElementById('ui').style.display = 'block';
-            
-            const config = {
-                type: Phaser.AUTO,
-                width: window.innerWidth,
-                height: window.innerHeight,
-                physics: { default: 'arcade' },
-                scene: {
-                    preload: function() {
-                        this.load.image('car', 'https://labs.phaser.io/assets/sprites/car90.png');
-                    },
-                    create: function() { setupScene.call(this, nivel); },
-                    update: update
-                }
-            };
-            game = new Phaser.Game(config);
-        }
+        const config = {
+            type: Phaser.AUTO,
+            width: window.innerWidth,
+            height: window.innerHeight,
+            physics: { default: 'arcade' },
+            scene: {
+                preload: function() {
+                    this.load.image('car', 'https://labs.phaser.io/assets/sprites/car90.png');
+                },
+                create: create,
+                update: update
+            }
+        };
+        game = new Phaser.Game(config);
 
-        let carro, cursors, speed = 0, driftScore = 0, tireMarks, trailTimer = 0;
-        let configNivel = { acc: 10, max: 600, drift: 0.1 };
+        let carro, cursors, speed = 0, driftScore = 0, tireMarks, particles, emitter;
+        let isNitroActive = false, nitroCooldown = false;
 
-        function setupScene(nivel) {
+        function create() {
             this.physics.world.setBounds(0, 0, WORLD_SIZE, WORLD_SIZE);
             this.add.rectangle(2000, 2000, WORLD_SIZE, WORLD_SIZE, 0x2ecc71).setDepth(-10);
             
             tireMarks = this.add.graphics().setDepth(-1);
-            let track = this.add.graphics();
-            track.fillStyle(0x333333);
+            let track = this.add.graphics().fillStyle(0x333333);
+            track.fillEllipse(2000, 2000, 2500, 1500);
+            track.fillStyle(0x2ecc71).fillEllipse(2000, 2000, 1800, 900);
 
-            if (nivel === 1) {
-                track.fillEllipse(2000, 2000, 2500, 1500);
-                track.fillStyle(0x2ecc71);
-                track.fillEllipse(2000, 2000, 1800, 900);
-                carro = this.physics.add.sprite(2000, 1400, 'car');
-            } else {
-                configNivel.drift = 0.2; // Mais drift no nível 2
-                // Desenha um circuito fechado em "8" para não ter fim
-                track.lineStyle(250, 0x333333);
-                track.strokePoints([
-                    {x: 1000, y: 1000}, {x: 3000, y: 1000}, 
-                    {x: 3000, y: 3000}, {x: 1000, y: 3000}, {x: 1000, y: 1000}
-                ], true, true);
-                carro = this.physics.add.sprite(1000, 1000, 'car');
-            }
+            // Sistema de Fogo (Nitro/Escapamento)
+            particles = this.add.particles(0, 0, 'car', {
+                speed: 100,
+                scale: { start: 0.2, end: 0 },
+                alpha: { start: 0.5, end: 0 },
+                tint: 0xff4400,
+                lifespan: 200,
+                blendMode: 'ADD',
+                following: true,
+                emitting: false
+            });
 
-            carro.setScale(0.8).setOrigin(0.5);
+            carro = this.physics.add.sprite(2000, 1400, 'car').setScale(0.8).setOrigin(0.5);
+            particles.startFollow(carro);
+
             cursors = this.input.keyboard.createCursorKeys();
             this.cameras.main.startFollow(carro, true, 0.1, 0.1);
         }
@@ -83,38 +69,52 @@
         function update(time, delta) {
             if (!carro) return;
 
-            // Aceleração Potente
-            if (cursors.up.isDown) {
-                speed = Math.min(speed + configNivel.acc, configNivel.max);
-            } else if (cursors.down.isDown) {
-                speed = Math.max(speed - configNivel.acc, -200);
-            } else {
-                speed *= 0.97; // Desaceleração natural
-            }
-
-            // Direção
-            if (Math.abs(speed) > 10) {
-                let rotDir = cursors.left.isDown ? -1 : (cursors.right.isDown ? 1 : 0);
-                carro.rotation += rotDir * 0.05;
-            }
-
-            // Física de Drift
-            let targetVx = Math.cos(carro.rotation) * speed;
-            let targetVy = Math.sin(carro.rotation) * speed;
-            carro.body.velocity.x = Phaser.Math.Linear(carro.body.velocity.x, targetVx, configNivel.drift);
-            carro.body.velocity.y = Phaser.Math.Linear(carro.body.velocity.y, targetVy, configNivel.drift);
-
-            // Marcas de Pneu e Lógica de Pontos
-            let isDrifting = Math.abs(carro.body.velocity.angle() - carro.rotation) > 0.3;
-            if (isDrifting && speed > 200) {
-                driftScore += 1;
-                document.getElementById('pts').innerText = `DRIFT: ${Math.floor(driftScore)}`;
+            // Ativa Nitro
+            if (cursors.space.isDown && !nitroCooldown && speed > 100) {
+                isNitroActive = true;
+                nitroCooldown = true;
+                particles.setParticleTint(0x00ffff); // Nitro azul
+                particles.emitting = true;
                 
-                if (time > trailTimer) {
-                    tireMarks.lineStyle(2, 0x000000, 0.2);
-                    tireMarks.strokeCircle(carro.x, carro.y, 2);
-                    trailTimer = time + 20;
+                this.time.delayedCall(1500, () => { 
+                    isNitroActive = false; 
+                    particles.emitting = false;
+                    document.getElementById('nitro-status').innerText = "NITRO: RECARREGANDO...";
+                });
+                this.time.delayedCall(5000, () => { 
+                    nitroCooldown = false; 
+                    document.getElementById('nitro-status').innerText = "NITRO: PRONTO (ESPAÇO)";
+                });
+            }
+
+            let currentMax = isNitroActive ? 900 : 500;
+            let currentAcc = isNitroActive ? 25 : 10;
+
+            if (cursors.up.isDown) {
+                speed = Math.min(speed + currentAcc, currentMax);
+                if (!isNitroActive) {
+                    particles.emitting = true;
+                    particles.setParticleTint(0xff6600); // Fogo normal
                 }
+            } else {
+                if (!isNitroActive) particles.emitting = false;
+                speed *= 0.97;
+            }
+
+            // Direção e Drift
+            if (Math.abs(speed) > 10) {
+                let rotSpeed = isNitroActive ? 0.03 : 0.05; // Mais difícil virar no nitro
+                if (cursors.left.isDown) carro.rotation -= rotSpeed;
+                if (cursors.right.isDown) carro.rotation += rotSpeed;
+            }
+
+            carro.body.setVelocity(Math.cos(carro.rotation) * speed, Math.sin(carro.rotation) * speed);
+
+            // Marcas de Pneu
+            if (Math.abs(carro.body.velocity.angle() - carro.rotation) > 0.3 && speed > 200) {
+                driftScore++;
+                document.getElementById('pts').innerText = `DRIFT: ${Math.floor(driftScore)}`;
+                tireMarks.lineStyle(2, 0x000000, 0.1).strokeCircle(carro.x, carro.y, 1);
             }
 
             document.getElementById('kmh').innerText = `KM/H: ${Math.floor(Math.abs(speed/2))}`;
